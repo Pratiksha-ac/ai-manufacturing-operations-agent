@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 from langgraph.types import Command
+import requests
 
 from agent_graph import build_graph
 
@@ -21,6 +22,37 @@ app = FastAPI(
 # ============================================================
 
 agent = build_graph()
+
+
+# ============================================================
+# N8N CONFIGURATION
+# ============================================================
+
+N8N_WEBHOOK_URL = "http://localhost:5678/webhook/manufacturing-alert"
+
+
+def send_to_n8n(data: dict):
+    """
+    Send manufacturing alert data to n8n.
+    """
+
+    try:
+        response = requests.post(
+            N8N_WEBHOOK_URL,
+            json=data,
+            timeout=10
+        )
+
+        response.raise_for_status()
+
+        return response.json()
+
+    except Exception as e:
+
+        return {
+            "status": "N8N_ERROR",
+            "error": str(e)
+        }
 
 
 # ============================================================
@@ -92,12 +124,27 @@ def investigate_machine(
         }
 
     # --------------------------------------------------------
+    # SEND COMPLETED RESULT TO N8N
+    # --------------------------------------------------------
+
+    n8n_data = {
+        "machine_id": result.get("machine_id"),
+        "severity": result.get("severity"),
+        "root_cause": result.get("root_cause"),
+        "recommendation": result.get("recommendation"),
+        "status": result.get("action_status")
+    }
+
+    n8n_response = send_to_n8n(n8n_data)
+
+    # --------------------------------------------------------
     # WORKFLOW COMPLETED WITHOUT APPROVAL
     # --------------------------------------------------------
 
     return {
         "status": "COMPLETED",
         "thread_id": thread_id,
+
         "result": {
             "machine_id": result.get("machine_id"),
             "anomaly": result.get("anomaly"),
@@ -122,7 +169,9 @@ def investigate_machine(
             "action_status": result.get(
                 "action_status"
             )
-        }
+        },
+
+        "n8n_response": n8n_response
     }
 
 
@@ -148,9 +197,28 @@ def approve_action(
         config=config
     )
 
+    # --------------------------------------------------------
+    # SEND APPROVAL RESULT TO N8N
+    # --------------------------------------------------------
+
+    n8n_data = {
+        "machine_id": result.get("machine_id"),
+        "severity": result.get("severity"),
+        "root_cause": result.get("root_cause"),
+        "recommendation": result.get("recommendation"),
+        "status": result.get("action_status")
+    }
+
+    n8n_response = send_to_n8n(n8n_data)
+
+    # --------------------------------------------------------
+    # RETURN APPROVAL RESULT
+    # --------------------------------------------------------
+
     return {
         "status": "COMPLETED",
         "thread_id": request.thread_id,
+
         "result": {
             "machine_id": result.get("machine_id"),
             "severity": result.get("severity"),
@@ -166,5 +234,7 @@ def approve_action(
             "action_status": result.get(
                 "action_status"
             )
-        }
+        },
+
+        "n8n_response": n8n_response
     }
